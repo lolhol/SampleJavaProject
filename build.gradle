@@ -25,13 +25,13 @@ task TestProject(type: JavaExec) {
     //systemProperty "java.library.path", "/usr/lib/"
 }
 
-task TestProjectDemo1(type: JavaExec) {
+task Demo1(type: JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     main = "org.example.Demo1"
     //systemProperty "java.library.path", "/usr/lib/"
 }
 
-task TestProjectDemo2(type: JavaExec) {
+task Demo2(type: JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     main = "org.example.Demo2"
     //systemProperty "java.library.path", "/usr/lib/"

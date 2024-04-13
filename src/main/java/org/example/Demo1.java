@@ -9,9 +9,9 @@ import org.example.grid.GlobalData;
 import org.example.grid.GridBoardRenderer2;
 import org.example.testing_robot.extern.carto.CartographerOut;
 import org.example.testing_robot.extern.carto.GoogleCartographer;
-import org.example.util.PointPosFloat;
 
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Demo1 {
     public static boolean isOpen = true;
@@ -21,10 +21,15 @@ public class Demo1 {
         final String USBPort = "/dev/ttyUSB0";
         final UnitreeLidar4Java unitree = new UnitreeLidar4Java();
 
-        carto.initiate("src/main/java/org/example/configuration_files", "cartographer_config_main_3d.lua", false, false,
-                11);
+        carto.initiate("src/main/java/org/example/configuration_files", "cartographer_config_main.lua", false, false,
+                10);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
             carto.deleteCartoAndOptimize();
             unitree.setState(UnitreeLidar4JavaStates.STANDBY);
         }));
@@ -81,37 +86,29 @@ public class Demo1 {
                 case POINTCLOUD:
                     PointCloud pointCloud = unitree.getPointCloudObject();
 
-                    float[] x = new float[pointCloud.point.length];
-                    float[] y = new float[pointCloud.point.length];
-                    float[] intensity = new float[pointCloud.point.length];
-                    Point ceilPoint = getBestCeilPoint(pointCloud.point);
-                    HashSet<PointPosFloat> removed = new HashSet<>();
-                    float total = 0;
+                    List<Float> tmpX = new ArrayList<>();
+                    List<Float> tmpY = new ArrayList<>();
+                    List<Float> tmpIntensity = new ArrayList<>();
 
                     for (int i = 0; i < pointCloud.point.length; i++) {
-                        Point p = pointCloud.point[i];
-                        total += p.x;
-                        if (p.y >= ceilPoint.y - 0.1) {
-                            x[i] = Float.MAX_VALUE;
-                            y[i] = Float.MAX_VALUE;
-                            intensity[i] = Float.MAX_VALUE;
+                        var cur = pointCloud.point[i];
+                        if (cur.y < -0.2 || cur.y > 0.2) {
                             continue;
                         }
 
-                        PointPosFloat pos = new PointPosFloat(p.x, p.z);
-                        if (!removed.contains(pos)) {
-                            x[i] = p.x;
-                            y[i] = p.z;
-                            intensity[i] = p.intensity;
-                            removed.add(pos);
-                        } else {
-                            x[i] = Float.MAX_VALUE;
-                            y[i] = Float.MAX_VALUE;
-                            intensity[i] = Float.MAX_VALUE;
-                        }
+                        tmpX.add(cur.x);
+                        tmpY.add(cur.z);
+                        tmpIntensity.add(cur.intensity);
                     }
 
-                    System.out.println("Average distance: " + total / pointCloud.point.length);
+                    float[] x = new float[tmpX.size()];
+                    float[] y = new float[tmpX.size()];
+                    float[] intensity = new float[tmpX.size()];
+                    for (int i = 0; i < tmpX.size(); i++) {
+                        x[i] = tmpX.get(i);
+                        y[i] = tmpY.get(i);
+                        intensity[i] = tmpIntensity.get(i);
+                    }
 
                     carto.updateLidarData(System.currentTimeMillis(), x, y, intensity);
             }

@@ -111,7 +111,7 @@ public class GridBoardRenderer2 extends JPanel {
                 }*/
 
                 g.setColor(new Color(color, color, color));
-                g.fillRect(x, y, 1, 1);
+                g.fillRect(x, y, 20, 20);
             }
         }
 

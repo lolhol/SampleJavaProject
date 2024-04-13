@@ -1,94 +1,160 @@
 package org.example.util;
 
+import brigero.IMUUnitree;
 import brigero.Point;
 import brigero.PointCloud;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 
 public class CacheManager {
     final File cacheDir;
 
-    public CacheManager(String filePath) throws IOException {
+    public CacheManager(String filePath, boolean flushAtStart) throws IOException {
         this.cacheDir = new File(filePath);
+
         if (!cacheDir.exists()) {
+            cacheDir.createNewFile();
+        }
+
+        if (flushAtStart) {
+            cacheDir.delete();
             cacheDir.createNewFile();
         }
     }
 
-    /**
-     * @param line the current line
-     * @return index 0 will be the timestamp, index 1 will be the index of the end of the timestamp string
-     */
-    public long[] getTimeStampLine(String line) {
-        int i = 0;
-        StringBuilder sb = new StringBuilder();
-        while (line.charAt(i) != ' ') {
-            sb.append(line.charAt(i));
-            i++;
-        }
+    public List<CachedEntree> loadData() throws IOException {
+        try (FileInputStream reader = new FileInputStream(cacheDir)) {
+            List<CachedEntree> cachedEntrees = new ArrayList<>();
 
-        return new long[]{Long.parseLong(sb.toString()), i + 1};
-    }
+            while (reader.available() > 0) {
+                byte identifier = reader.readNBytes(1)[0];
+                long timestamp = MemUtils.bytesToLong(reader.readNBytes(8));
 
-    public HashMap<Long, List<Point>> getPoints() throws IOException {
-        if (!cacheDir.exists()) {
-            throw new RuntimeException("Cache directory not found: " + cacheDir.getAbsolutePath());
-        }
-
-        final FileReader reader = new FileReader(cacheDir);
-        final BufferedReader bufferedReader = new BufferedReader(reader);
-
-        String line;
-        HashMap<Long, List<Point>> points = new HashMap<>();
-        while ((line = bufferedReader.readLine()) != null) {
-            StringBuilder sb = new StringBuilder();
-            long[] timestamp = getTimeStampLine(line);
-
-            List<Point> pointList = new ArrayList<>();
-            List<Float> tmp = new ArrayList<>();
-
-            for (int i = (int) timestamp[1]; i < line.length(); i++) {
-                var curChar = line.charAt(i);
-                if (curChar == ' ') {
-                    if (tmp.size() != 4 && !sb.isEmpty()) {
-                        tmp.add(Float.parseFloat(sb.toString()));
-                    } else {
-                        pointList.add(new Point(tmp.get(0), tmp.get(1), tmp.get(2), tmp.get(3), 0.0F, 0));
-                        tmp.clear();
-                    }
-
-                    sb = new StringBuilder();
-                    continue;
+                if (identifier == CacheType.IMU.identifier) {
+                    cachedEntrees.add(new CachedEntree(null, readIMUData(reader), timestamp));
+                } else {
+                    cachedEntrees.add(new CachedEntree(readPoints(reader), null, timestamp));
                 }
-
-                sb.append(curChar);
             }
 
-            points.put(timestamp[0], pointList);
+            reader.close();
+
+            return cachedEntrees;
+        } catch (IOException e) {
+            e.printStackTrace();
         }
 
-        bufferedReader.close();
-        reader.close();
-
-        return points;
+        return null;
     }
 
-    public void savePointCloud(PointCloud cloud, Long curTime) throws IOException {
-        if (!cacheDir.exists()) {
-            throw new RuntimeException("Cache directory not found: " + cacheDir.getAbsolutePath());
+    private IMUUnitree readIMUData(FileInputStream reader) throws IOException {
+        float[] linear_acceleration = new float[3];
+        for (int i = 0; i < 3; i++) {
+            linear_acceleration[i] = MemUtils.bytesToFloat(reader.readNBytes(4));
         }
 
-        final FileWriter writer = new FileWriter(cacheDir, true);
-        var points = cloud.point;
-
-        writer.write(curTime.toString());
-        for (var point : points) {
-            writer.append(" " + point.x + " " + point.y + " " + point.z + " " + point.intensity);
+        float[] angular_velocity = new float[3];
+        for (int i = 0; i < 3; i++) {
+            angular_velocity[i] = MemUtils.bytesToFloat(reader.readNBytes(4));
         }
 
-        writer.write("\n");
+        return new IMUUnitree(0, 0, new float[]{0, 0, 0, 0}, angular_velocity, linear_acceleration);
+    }
+
+    private PointsCombined readPoints(FileInputStream reader) throws IOException {
+        int numPoints = MemUtils.bytesToInt(reader.readNBytes(4));
+
+        System.out.println("Reading " + numPoints + " points...");
+
+        float[] xs = new float[numPoints];
+        float[] ys = new float[numPoints];
+        float[] zs = new float[numPoints];
+        float[] is = new float[numPoints];
+
+        for (int i = 0; i < numPoints; i++) {
+            xs[i] = MemUtils.bytesToFloat(reader.readNBytes(4));
+            ys[i] = MemUtils.bytesToFloat(reader.readNBytes(4));
+            zs[i] = MemUtils.bytesToFloat(reader.readNBytes(4));
+            is[i] = MemUtils.bytesToFloat(reader.readNBytes(4));
+        }
+        return new PointsCombined(xs, ys, zs, is);
+    }
+
+    /**
+     * @param data      the data to be added to the file
+     * @param curTimeMS the current time in milliseconds
+     * @throws IOException if an I/O error occurs
+     * @apiNote will write: identifier (byte 1), timestamp (long 8 bytes), (x (float 4 bytes), y (float 4 bytes), z (float 4 bytes)), (x (float 4 bytes), y (float 4 bytes), z (float 4 bytes))
+     */
+    public void saveIMUData(IMUUnitree data, long curTimeMS) throws IOException {
+        FileOutputStream writer = new FileOutputStream(cacheDir, true);
+        writer.write(CacheType.IMU.identifier);
+
+        writer.write(MemUtils.longToBytes(curTimeMS)); // write timestamp
+
+        write3Floats(writer, data.linear_acceleration);
+        write3Floats(writer, data.angular_velocity);
+    }
+
+    private void write3Floats(FileOutputStream writer, float[] data) throws IOException {
+        for (int i = 0; i < 3; i++) {
+            writer.write(MemUtils.floatToBytes(data[i]));
+        }
+    }
+
+    /**
+     * @param cloud     the cloud to add to the file
+     * @param curTimeMS the current time in milliseconds
+     * @throws IOException if an I/O error occurs
+     * @apiNote will write in the format: identifier (byte 1), timestamp (long 8 bytes), number of points (int 4 bytes), (x (float 4 bytes),
+     * y (float 4 bytes), z (float 4 bytes), i (float 4 bytes))
+     */
+    public void savePointCloud(PointCloud cloud, long curTimeMS) throws IOException {
+        FileOutputStream writer = new FileOutputStream(cacheDir, true);
+
+        writer.write(CacheType.CLOUD.identifier);
+
+        writer.write(MemUtils.longToBytes(curTimeMS)); // write timestamp
+        writer.write(MemUtils.intToBytes(cloud.point.length)); // write number of points
+        System.out.println("Writing " + cloud.point.length + " points...");
+
+        // write points
+        for (Point p : cloud.point) {
+            writer.write(MemUtils.floatToBytes(p.x));
+            writer.write(MemUtils.floatToBytes(p.y));
+            writer.write(MemUtils.floatToBytes(p.z));
+            writer.write(MemUtils.floatToBytes(p.intensity));
+        }
+    }
+
+    public class CachedEntree {
+        public final PointsCombined points;
+        public final IMUUnitree imu;
+        public final long timestamp;
+
+        public CachedEntree(PointsCombined points, IMUUnitree imu, long timestamp) {
+            this.points = points;
+            this.imu = imu;
+            this.timestamp = timestamp;
+        }
+    }
+
+    public class PointsCombined {
+        public final float[] xs;
+        public final float[] ys;
+        public final float[] zs;
+        public final float[] is;
+
+        public PointsCombined(float[] xs, float[] ys, float[] zs, float[] is) {
+            this.xs = xs;
+            this.ys = ys;
+            this.zs = zs;
+            this.is = is;
+        }
     }
 }

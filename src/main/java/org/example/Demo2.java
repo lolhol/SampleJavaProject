@@ -16,12 +16,28 @@ public class Demo2 {
 
     public static void main(String[] args) throws InterruptedException {
         Cartographer3D carto = new Cartographer3D();
-        final int pxPerMeter = 20;
         carto.init("src/main/java/org/example/configuration_files_3d", "cartographer_config_main_3d.lua", 8, new String[]{"imu0"}, new String[]{}, new String[]{"range0"});
         final String USBPort = "/dev/ttyUSB0";
         final UnitreeLidar4Java unitree = new UnitreeLidar4Java();
 
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> unitree.setState(UnitreeLidar4JavaStates.STANDBY)));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+
+            carto.stopAndOptimize();
+            unitree.setState(UnitreeLidar4JavaStates.STANDBY);
+        }));
+
+        final int pxPerMeter = 100;
+
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
 
         new Thread(() -> {
             GridBoardRenderer2 b2 = new GridBoardRenderer2(100, 100, null, null);
@@ -29,6 +45,11 @@ public class Demo2 {
                 while (isOpen) {
                     Thread.sleep(500);
                     var out = carto.paintMap();
+
+                    if (out == null) {
+                        continue;
+                    }
+
                     List<float[]> filteredList = filterOutOfRange(out);
 
                     float[] minMaxXY = getMinMaxXY(filteredList);
@@ -39,12 +60,11 @@ public class Demo2 {
 
                     int width = (int) (pxPerMeter * (Math.abs(minMaxXY[2] - minMaxXY[0]))) + pxPerMeter;
                     int height = (int) (pxPerMeter * (Math.abs(minMaxXY[3] - minMaxXY[1]))) + pxPerMeter;
-                    System.out.println(width + " " + height);
 
                     byte[] newData = new byte[width * height];
                     for (float[] dat : filteredList) {
 
-                        if (dat[1] > 0.2 || dat[1] < -0.2) continue;
+                        //if (dat[2] < -0.5 || dat[2] > 0.5) continue;
 
                         int x = (int) Math.abs(dat[0] * pxPerMeter);
                         int z = (int) Math.abs(dat[2] * pxPerMeter);
@@ -54,6 +74,7 @@ public class Demo2 {
                         newData[z * width + x] = (byte) 255;
                     }
 
+                    System.out.println(width + " " + height);
                     b2.putData(newData, width, height);
 
                     //System.out.println(Arrays.toString(minMaxXY));
